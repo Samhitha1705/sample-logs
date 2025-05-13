@@ -6,7 +6,7 @@ pipeline {
         SPLUNK_HEC_URL = 'https://127.0.0.1:8088/services/collector/event'
         SPLUNK_HEC_TOKEN = credentials('3366c860-b822-4ee9-8cfe-398871d88cc5')
         SPLUNK_INDEX = 'jenkinsgit_logs'
-        GIT_REPO_URL = 'https://github.com/Samhitha1705/logs.git'
+        GIT_REPO_URL = 'https://github.com/Samhitha1705/sample-logs.git'
     }
 
     stages {
