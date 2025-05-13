@@ -1,0 +1,80 @@
+pipeline {
+    agent any
+
+    environment {
+        // Splunk HEC URL and token for logging
+        SPLUNK_HEC_URL = 'https://127.0.0.1:8088/services/collector/event'
+        SPLUNK_HEC_TOKEN = credentials('3366c860-b822-4ee9-8cfe-398871d88cc5')
+        SPLUNK_INDEX = 'jenkinsgit_logs'
+        GIT_REPO_URL = 'https://github.com/Samhitha1705/logs.git'
+    }
+
+    stages {
+        // Checkout the latest code from GitHub
+        stage('Checkout') {
+            steps {
+                script {
+                    bat "git clone %GIT_REPO_URL%"
+                    dir('logs') {
+                        bat "git pull"
+                    }
+                }
+            }
+        }
+
+        // Install dependencies (e.g., Node.js packages)
+        stage('Install Dependencies') {
+            steps {
+                dir('logs') {
+                    bat "npm install"
+                }
+            }
+        }
+
+        // Run any tests if defined in package.json
+        stage('Run Tests') {
+            steps {
+                script {
+                    dir('logs') {
+                        def packageJson = readJSON file: 'package.json'
+                        if (packageJson.scripts?.test) {
+                            bat "npm test"
+                        } else {
+                            echo 'No test script defined in package.json'
+                        }
+                    }
+                }
+            }
+        }
+
+        // Run the server
+        // stage('Run Server') {
+        //     steps {
+        //         dir('logs') {
+        //             bat "node server.js"
+        //         }
+        //     }
+        // }
+
+        // Deploy to Splunk
+        stage('Deploy') {
+            steps {
+                script {
+                    echo "Deploying to production..."
+                    bat """
+                        curl -k -X POST "%SPLUNK_HEC_URL%" ^
+                            -H "Authorization: Splunk %SPLUNK_HEC_TOKEN%" ^
+                            -d "{\\"event\\": \\"Deployment Started\\", \\"sourcetype\\": \\"login_logs\\", \\"index\\": \\"%SPLUNK_INDEX%\\"}"
+                    """
+                }
+            }
+        }
+    } // 🔧 this closing brace was missing for the stages block
+
+    post {
+        always {
+            cleanWs()  // Clean up workspace after the build is complete
+        }
+    }
+}
+
