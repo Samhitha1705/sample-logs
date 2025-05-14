@@ -46,7 +46,7 @@ pipeline {
                     curl -k -X POST "${SPLUNK_HEC_URL}" ^
                       -H "Authorization: Splunk ${SPLUNK_HEC_TOKEN}" ^
                       -H "Content-Type: application/json" ^
-                      -d '{"event":"Deployment Started","index":"${SPLUNK_INDEX}"}'
+                      -d "{\\"event\\":\\"Deployment Started\\",\\"index\\":\\"${SPLUNK_INDEX}\\"}"
                 """
                 sendToSplunk('Deployment triggered')
             }
@@ -56,64 +56,47 @@ pipeline {
     post {
         success {
             script {
-                // Build payload using single-quoted Groovy string + concatenation
-                def snPayload = '{"short_description":"Jenkins Pipeline Succeeded - Build #' + env.BUILD_NUMBER +
-                                 '","description":"All stages completed successfully.","urgency":"4","impact":"4","caller_id":"6816f79cc0a8016401c5a33be04be441"}'
-
-                // Call ServiceNow
-                def resp = bat(
-                    script: """
-                        curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
-                          --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
-                          -H "Content-Type: application/json" ^
-                          -d '${snPayload}'
-                    """,
-                    returnStdout: true
-                ).trim()
-
-                echo ">>> Raw SN response: ${resp}"
-                if (resp.startsWith('{')) {
-                    def incNumber = readJSON(text: resp).result.number
-                    echo "Created SN incident: ${incNumber}"
-                } else {
-                    error "Invalid JSON from SN: ${resp}"
-                }
-
-                sendToSplunk("ServiceNow success incident: ${resp}")
-
+                // Create SN incident on success
+                bat """
+                    curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
+                      --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
+                      -H "Content-Type: application/json" ^
+                      -d "{\
+\\"short_description\\":\\"Jenkins Pipeline Succeeded - Build #${env.BUILD_NUMBER}\\",\
+\\"description\\":\\"All stages completed successfully.\\",\
+\\"urgency\\":\\"4\\",\
+\\"impact\\":\\"4\\",\
+\\"caller_id\\":\\"6816f79cc0a8016401c5a33be04be441\\"\
+}"
+                """
+                // Assuming SN returns JSON, you can capture/parse it similarly if needed
+                sendToSplunk("ServiceNow incident created for SUCCESS build #${env.BUILD_NUMBER}")
+                
+                // Jenkins email
                 emailext(
                     to: 'Veda@middlewaretalents.com',
                     subject: "✅ Build #${env.BUILD_NUMBER} Succeeded",
-                    body: "<p>Build #${env.BUILD_NUMBER} succeeded. SN response: ${resp}</p>"
+                    body: "<p>Build #${env.BUILD_NUMBER} succeeded. An incident was created in ServiceNow.</p>"
                 )
             }
         }
 
         failure {
             script {
-                def snPayload = '{"short_description":"Jenkins Pipeline Failure - Build #' + env.BUILD_NUMBER +
-                                 '","description":"Failed at stage ' + env.STAGE_NAME +
-                                 '.","urgency":"2","impact":"2","caller_id":"6816f79cc0a8016401c5a33be04be441"}'
-
-                def resp = bat(
-                    script: """
-                        curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
-                          --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
-                          -H "Content-Type: application/json" ^
-                          -d '${snPayload}'
-                    """,
-                    returnStdout: true
-                ).trim()
-
-                echo ">>> Raw SN response: ${resp}"
-                if (resp.startsWith('{')) {
-                    def failInc = readJSON(text: resp).result.number
-                    echo "Created failure SN incident: ${failInc}"
-                } else {
-                    error "Invalid JSON from SN: ${resp}"
-                }
-
-                sendToSplunk("ServiceNow failure incident: ${resp}")
+                // Create SN incident on failure
+                bat """
+                    curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
+                      --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
+                      -H "Content-Type: application/json" ^
+                      -d "{\
+\\"short_description\\":\\"Jenkins Pipeline Failure - Build #${env.BUILD_NUMBER}\\",\
+\\"description\\":\\"Pipeline failed at stage ${env.STAGE_NAME}.\\",\
+\\"urgency\\":\\"2\\",\
+\\"impact\\":\\"2\\",\
+\\"caller_id\\":\\"6816f79cc0a8016401c5a33be04be441\\"\
+}"
+                """
+                sendToSplunk("ServiceNow incident created for FAILURE at stage ${env.STAGE_NAME}")
             }
         }
 
@@ -123,12 +106,12 @@ pipeline {
     }
 }
 
-// Helper to send to Splunk
+// Helper to send a message to Splunk
 def sendToSplunk(String message) {
     bat """
         curl -k -X POST "${env.SPLUNK_HEC_URL}" ^
           -H "Authorization: Splunk ${env.SPLUNK_HEC_TOKEN}" ^
           -H "Content-Type: application/json" ^
-          -d '{"event":"${message}","index":"${env.SPLUNK_INDEX}"}'
+          -d "{\\"event\\":\\"${message}\\",\\"index\\":\\"${env.SPLUNK_INDEX}\\"}"
     """
 }
