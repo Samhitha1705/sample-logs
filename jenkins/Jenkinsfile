@@ -2,16 +2,17 @@ pipeline {
     agent any
 
     environment {
-        SPLUNK_HEC_URL = 'https://127.0.0.1:8088/services/collector/event'
-        SPLUNK_HEC_TOKEN = credentials('3366c860-b822-4ee9-8cfe-398871d88cc5')  // Your Splunk HEC token from Jenkins credentials
-        SPLUNK_INDEX = 'jenkinsgit_logs'
-        SERVICENOW_CREDS = credentials('servicenow-creds') // Replace with actual Jenkins credential ID for ServiceNow
+        SPLUNK_HEC_URL   = 'https://127.0.0.1:8088/services/collector/event'
+        SPLUNK_HEC_TOKEN = credentials('3366c860-b822-4ee9-8cfe-398871d88cc5')
+        SPLUNK_INDEX     = 'jenkinsgit_logs'
+        SERVICENOW_CREDS = credentials('servicenow-creds')
+        // ServiceNow instance URL
+        SN_INSTANCE      = 'https://dev329656.service-now.com'
     }
 
     stages {
         stage('Checkout') {
             steps {
-                echo 'Checking out code...'
                 checkout scm
                 sendToSplunk("Code checkout completed")
             }
@@ -27,8 +28,8 @@ pipeline {
         stage('Run Tests') {
             steps {
                 script {
-                    def packageJson = readJSON file: 'package.json'
-                    if (packageJson.scripts?.test) {
+                    def pkg = readJSON file: 'package.json'
+                    if (pkg.scripts?.test) {
                         bat "npm test"
                         sendToSplunk("Tests executed successfully")
                     } else {
@@ -41,46 +42,79 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                script {
-                    echo "Deploying..."
-                    bat """
-                        curl -k -X POST "%SPLUNK_HEC_URL%" ^
-                        -H "Authorization: Splunk %SPLUNK_HEC_TOKEN%" ^
-                        -d "{\\"event\\": \\"Deployment Started\\", \\"index\\": \\"%SPLUNK_INDEX%\\"}"
-                    """
-                    sendToSplunk("Deployment triggered")
-                }
-            }
-        }
-
-        stage('Create ServiceNow Incident') {
-            when {
-                expression { currentBuild.result == 'FAILURE' }
-            }
-            steps {
-                script {
-                    bat """
-                    curl -X POST "https://dev329656.service-now.com/api/now/table/incident" ^
-                    --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
+                echo "Deploying..."
+                bat """
+                    curl -k -X POST "${env.SPLUNK_HEC_URL}" ^
+                    -H "Authorization: Splunk ${env.SPLUNK_HEC_TOKEN}" ^
                     -H "Content-Type: application/json" ^
-                    -d "{ \\
-                        \\"short_description\\": \\"Jenkins Pipeline Failure\\", \\
-                        \\"description\\": \\"Build #${env.BUILD_NUMBER} failed during the pipeline.\\", \\
-                        \\"urgency\\": \\"2\\", \\
-                        \\"impact\\": \\"2\\", \\
-                        \\"caller_id\\": \\"6816f79cc0a8016401c5a33be04be441\\" \\
-                    }"
-                    """
-                    sendToSplunk("ServiceNow incident created for pipeline failure")
-                }
+                    -d "{\\"event\\": \\"Deployment Started\\", \\"index\\": \\"${env.SPLUNK_INDEX}\\"}"
+                """
+                sendToSplunk("Deployment triggered")
             }
         }
     }
 
     post {
+        success {
+            script {
+                // 1) Create ServiceNow incident and capture response
+                def response = bat(
+                    script: """
+                    curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
+                    --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
+                    -H "Content-Type: application/json" ^
+                    -d '{ 
+                        "short_description": "Jenkins Pipeline Succeeded - Build #${env.BUILD_NUMBER}", 
+                        "description": "All stages completed successfully.", 
+                        "urgency": "4", 
+                        "impact": "4", 
+                        "caller_id": "6816f79cc0a8016401c5a33be04be441" 
+                    }'""",
+                    returnStdout: true
+                ).trim()
+
+                // 2) Parse out the incident number
+                def json = readJSON text: response
+                def incNumber = json.result.number
+
+                // 3) Log to Splunk
+                sendToSplunk("ServiceNow incident ${incNumber} created for SUCCESS build #${env.BUILD_NUMBER}")
+
+                // 4) Send Jenkins email
+                emailext(
+                    to: 'Veda@middlewaretalents.com',
+                    subject: "✅ Build #${env.BUILD_NUMBER} Succeeded (Incident ${incNumber})",
+                    body: """
+                    <p>Hello Veda,</p>
+                    <p>Your Jenkins pipeline <b>#${env.BUILD_NUMBER}</b> completed successfully and created Incident <b>${incNumber}</b> in ServiceNow.</p>
+                    <p><a href="${SN_INSTANCE}/nav_to.do?uri=incident.do?sysparm_query=number%3D${incNumber}">View in ServiceNow</a></p>
+                    """
+                )
+            }
+        }
+
         failure {
             script {
-                sendToSplunk("Pipeline FAILED at stage: ${env.STAGE_NAME}")
+                // Create incident on failure
+                def resp = bat(
+                    script: """
+                    curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
+                    --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
+                    -H "Content-Type: application/json" ^
+                    -d '{ 
+                        "short_description": "Jenkins Pipeline Failure - Build #${env.BUILD_NUMBER}", 
+                        "description": "Stage '${env.STAGE_NAME}' failed in pipeline.", 
+                        "urgency": "2", 
+                        "impact": "2", 
+                        "caller_id": "6816f79cc0a8016401c5a33be04be441" 
+                    }'""",
+                    returnStdout: true
+                ).trim()
+
+                def js = readJSON text: resp
+                def failInc = js.result.number
+
+                sendToSplunk("ServiceNow incident ${failInc} created for FAILURE at stage: ${env.STAGE_NAME}")
             }
         }
 
@@ -90,8 +124,8 @@ pipeline {
     }
 }
 
-// 👇 Shared function to send logs to Splunk
-def sendToSplunk(message) {
+// Shared function to send logs to Splunk
+def sendToSplunk(String message) {
     bat """
         curl -k -X POST "${env.SPLUNK_HEC_URL}" ^
         -H "Authorization: Splunk ${env.SPLUNK_HEC_TOKEN}" ^
