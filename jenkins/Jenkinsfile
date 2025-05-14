@@ -6,7 +6,6 @@ pipeline {
         SPLUNK_HEC_TOKEN = credentials('3366c860-b822-4ee9-8cfe-398871d88cc5')
         SPLUNK_INDEX     = 'jenkinsgit_logs'
         SERVICENOW_CREDS = credentials('servicenow-creds')
-        // ServiceNow instance URL
         SN_INSTANCE      = 'https://dev329656.service-now.com'
     }
 
@@ -44,10 +43,10 @@ pipeline {
             steps {
                 echo "Deploying..."
                 bat """
-                    curl -k -X POST "${env.SPLUNK_HEC_URL}" ^
-                    -H "Authorization: Splunk ${env.SPLUNK_HEC_TOKEN}" ^
+                    curl -k -X POST "${SPLUNK_HEC_URL}" ^
+                    -H "Authorization: Splunk ${SPLUNK_HEC_TOKEN}" ^
                     -H "Content-Type: application/json" ^
-                    -d "{\\"event\\": \\"Deployment Started\\", \\"index\\": \\"${env.SPLUNK_INDEX}\\"}"
+                    -d "{\"event\":\"Deployment Started\",\"index\":\"${SPLUNK_INDEX}\"}"
                 """
                 sendToSplunk("Deployment triggered")
             }
@@ -57,37 +56,34 @@ pipeline {
     post {
         success {
             script {
-                // 1) Create ServiceNow incident and capture response
-                def response = bat(
+                // Build a one-line JSON payload
+                def payload = "{\"short_description\":\"Jenkins Pipeline Succeeded - Build #${env.BUILD_NUMBER}\",\"description\":\"All stages completed successfully.\",\"urgency\":\"4\",\"impact\":\"4\",\"caller_id\":\"6816f79cc0a8016401c5a33be04be441\"}"
+
+                // Send to ServiceNow
+                def resp = bat(
                     script: """
-                    curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
-                    --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
-                    -H "Content-Type: application/json" ^
-                    -d '{ 
-                        "short_description": "Jenkins Pipeline Succeeded - Build #${env.BUILD_NUMBER}", 
-                        "description": "All stages completed successfully.", 
-                        "urgency": "4", 
-                        "impact": "4", 
-                        "caller_id": "6816f79cc0a8016401c5a33be04be441" 
-                    }'""",
+                        curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
+                        --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
+                        -H "Content-Type: application/json" ^
+                        -d "${payload}"
+                    """,
                     returnStdout: true
                 ).trim()
 
-                // 2) Parse out the incident number
-                def json = readJSON text: response
-                def incNumber = json.result.number
+                // Parse incident number
+                def incNumber = readJSON(text: resp).result.number
 
-                // 3) Log to Splunk
+                // Log to Splunk
                 sendToSplunk("ServiceNow incident ${incNumber} created for SUCCESS build #${env.BUILD_NUMBER}")
 
-                // 4) Send Jenkins email
+                // Send Jenkins email
                 emailext(
                     to: 'Veda@middlewaretalents.com',
                     subject: "✅ Build #${env.BUILD_NUMBER} Succeeded (Incident ${incNumber})",
                     body: """
-                    <p>Hello Veda,</p>
-                    <p>Your Jenkins pipeline <b>#${env.BUILD_NUMBER}</b> completed successfully and created Incident <b>${incNumber}</b> in ServiceNow.</p>
-                    <p><a href="${SN_INSTANCE}/nav_to.do?uri=incident.do?sysparm_query=number%3D${incNumber}">View in ServiceNow</a></p>
+                        <p>Hello Veda,</p>
+                        <p>Your Jenkins pipeline <b>#${env.BUILD_NUMBER}</b> completed successfully and created Incident <b>${incNumber}</b> in ServiceNow.</p>
+                        <p><a href="${SN_INSTANCE}/nav_to.do?uri=incident.do?sysparm_query=number%3D${incNumber}">View in ServiceNow</a></p>
                     """
                 )
             }
@@ -95,24 +91,19 @@ pipeline {
 
         failure {
             script {
-                // Create incident on failure
+                def payload = "{\"short_description\":\"Jenkins Pipeline Failure - Build #${env.BUILD_NUMBER}\",\"description\":\"Pipeline failed at stage '${env.STAGE_NAME}'.\",\"urgency\":\"2\",\"impact\":\"2\",\"caller_id\":\"6816f79cc0a8016401c5a33be04be441\"}"
+
                 def resp = bat(
                     script: """
-                    curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
-                    --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
-                    -H "Content-Type: application/json" ^
-                    -d '{ 
-                        "short_description": "Jenkins Pipeline Failure - Build #${env.BUILD_NUMBER}", 
-                        "description": "Stage '${env.STAGE_NAME}' failed in pipeline.", 
-                        "urgency": "2", 
-                        "impact": "2", 
-                        "caller_id": "6816f79cc0a8016401c5a33be04be441" 
-                    }'""",
+                        curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
+                        --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
+                        -H "Content-Type: application/json" ^
+                        -d "${payload}"
+                    """,
                     returnStdout: true
                 ).trim()
 
-                def js = readJSON text: resp
-                def failInc = js.result.number
+                def failInc = readJSON(text: resp).result.number
 
                 sendToSplunk("ServiceNow incident ${failInc} created for FAILURE at stage: ${env.STAGE_NAME}")
             }
@@ -124,12 +115,12 @@ pipeline {
     }
 }
 
-// Shared function to send logs to Splunk
+// Shared helper
 def sendToSplunk(String message) {
     bat """
-        curl -k -X POST "${env.SPLUNK_HEC_URL}" ^
-        -H "Authorization: Splunk ${env.SPLUNK_HEC_TOKEN}" ^
+        curl -k -X POST "${SPLUNK_HEC_URL}" ^
+        -H "Authorization: Splunk ${SPLUNK_HEC_TOKEN}" ^
         -H "Content-Type: application/json" ^
-        -d "{ \\"event\\": \\"${message}\\", \\"index\\": \\"${env.SPLUNK_INDEX}\\" }"
+        -d "{\"event\":\"${message}\",\"index\":\"${SPLUNK_INDEX}\"}"
     """
 }
