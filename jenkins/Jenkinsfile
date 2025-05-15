@@ -1,3 +1,9 @@
+properties([
+    pipelineTriggers([
+        pollSCM('* * * * *') // Poll Git every minute for any changes
+    ])
+])
+
 pipeline {
     agent any
 
@@ -66,10 +72,9 @@ pipeline {
 \\"description\\":\\"All stages completed successfully.\\",\
 \\"urgency\\":\\"4\\",\
 \\"impact\\":\\"4\\",\
-\\"caller_id\\":\\"6816f79cc0a8016401c5a33be04be441\\"\
+\\"caller_id\\":\\"6816f79cc0a8016401c5a33be04be441\"\
 }"
                 """
-                // Assuming SN returns JSON, you can capture/parse it similarly if needed
                 sendToSplunk("ServiceNow incident created for SUCCESS build #${env.BUILD_NUMBER}")
                 
                 // Jenkins email
@@ -93,7 +98,7 @@ pipeline {
 \\"description\\":\\"Pipeline failed at stage ${env.STAGE_NAME}.\\",\
 \\"urgency\\":\\"2\\",\
 \\"impact\\":\\"2\\",\
-\\"caller_id\\":\\"6816f79cc0a8016401c5a33be04be441\\"\
+\\"caller_id\\":\\"6816f79cc0a8016401c5a33be04be441\"\
 }"
                 """
                 sendToSplunk("ServiceNow incident created for FAILURE at stage ${env.STAGE_NAME}")
