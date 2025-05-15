@@ -1,9 +1,9 @@
+// Trigger: Poll Git every minute for changes
 properties([
     pipelineTriggers([
-        pollSCM('* * * * *') // Poll Git every minute for any changes
+        pollSCM('* * * * *')
     ])
 ])
-
 
 pipeline {
     agent any
