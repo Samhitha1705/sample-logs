@@ -12,7 +12,6 @@ pipeline {
         SPLUNK_HEC_URL   = 'https://127.0.0.1:8088/services/collector/event'
         SPLUNK_HEC_TOKEN = credentials('3366c860-b822-4ee9-8cfe-398871d88cc5')
         SPLUNK_INDEX     = 'jenkinsgit_logs'
-        SERVICENOW_CREDS = credentials('servicenow-creds')
         SN_INSTANCE      = 'https://dev329656.service-now.com'
     }
 
@@ -62,47 +61,51 @@ pipeline {
 
     post {
         success {
-            script {
-                // Create SN incident on success
-                bat """
-                    curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
-                      --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
-                      -H "Content-Type: application/json" ^
-                      -d "{\
+            withCredentials([usernamePassword(credentialsId: 'servicenow-creds', usernameVariable: 'SN_USER', passwordVariable: 'SN_PASS')]) {
+                script {
+                    // Create SN incident on success
+                    bat """
+                        curl -k -w "\\nStatus: %{http_code}\\n" -o response_sn.json -X POST "${SN_INSTANCE}/api/now/table/incident" ^
+                          --user "%SN_USER%:%SN_PASS%" ^
+                          -H "Content-Type: application/json" ^
+                          -d "{\
 \\"short_description\\":\\"Jenkins Pipeline Succeeded - Build #${env.BUILD_NUMBER}\\",\
 \\"description\\":\\"All stages completed successfully.\\",\
 \\"urgency\\":\\"4\\",\
-\\"impact\\":\\"4\\",\
-\\"caller_id\\":\\"6816f79cc0a8016401c5a33be04be441\"\
+\\"impact\\":\\"4\\"\
 }"
-                """
-                sendToSplunk("ServiceNow incident created for SUCCESS build #${env.BUILD_NUMBER}")
-                
-                // Jenkins email
-                emailext(
-                    to: 'Veda@middlewaretalents.com',
-                    subject: "✅ Build #${env.BUILD_NUMBER} Succeeded",
-                    body: "<p>Build #${env.BUILD_NUMBER} succeeded. An incident was created in ServiceNow.</p>"
-                )
+                        type response_sn.json
+                    """
+                    sendToSplunk("ServiceNow incident created for SUCCESS build #${env.BUILD_NUMBER}")
+                    
+                    // Jenkins email
+                    emailext(
+                        to: 'Veda@middlewaretalents.com',
+                        subject: "✅ Build #${env.BUILD_NUMBER} Succeeded",
+                        body: "<p>Build #${env.BUILD_NUMBER} succeeded. An incident was created in ServiceNow.</p>"
+                    )
+                }
             }
         }
 
         failure {
-            script {
-                // Create SN incident on failure
-                bat """
-                    curl -s -X POST "${SN_INSTANCE}/api/now/table/incident" ^
-                      --user "${SERVICENOW_CREDS_USR}:${SERVICENOW_CREDS_PSW}" ^
-                      -H "Content-Type: application/json" ^
-                      -d "{\
+            withCredentials([usernamePassword(credentialsId: 'servicenow-creds', usernameVariable: 'SN_USER', passwordVariable: 'SN_PASS')]) {
+                script {
+                    // Create SN incident on failure
+                    bat """
+                        curl -k -w "\\nStatus: %{http_code}\\n" -o response_sn.json -X POST "${SN_INSTANCE}/api/now/table/incident" ^
+                          --user "%SN_USER%:%SN_PASS%" ^
+                          -H "Content-Type: application/json" ^
+                          -d "{\
 \\"short_description\\":\\"Jenkins Pipeline Failure - Build #${env.BUILD_NUMBER}\\",\
 \\"description\\":\\"Pipeline failed at stage ${env.STAGE_NAME}.\\",\
 \\"urgency\\":\\"2\\",\
-\\"impact\\":\\"2\\",\
-\\"caller_id\\":\\"6816f79cc0a8016401c5a33be04be441\"\
+\\"impact\\":\\"2\\"\
 }"
-                """
-                sendToSplunk("ServiceNow incident created for FAILURE at stage ${env.STAGE_NAME}")
+                        type response_sn.json
+                    """
+                    sendToSplunk("ServiceNow incident created for FAILURE at stage ${env.STAGE_NAME}")
+                }
             }
         }
 
